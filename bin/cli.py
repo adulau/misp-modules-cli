@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -18,6 +19,8 @@ DEFAULT_DESCRIBE_TYPES_URL = (
     "https://raw.githubusercontent.com/MISP/MISP/refs/heads/2.5/describeTypes.json"
 )
 DEFAULT_CONFIG_PATH = os.path.expanduser("~/.config/misp-modules-cli/config.json")
+DEFAULT_CACHE_PATH = os.path.expanduser("~/.cache/misp-modules-cli/cache.json")
+DEFAULT_CACHE_TTL_SECONDS = 12 * 60 * 60
 
 
 def log(message: str = "") -> None:
@@ -405,6 +408,80 @@ def parse_set_args(values: Optional[List[str]]) -> Dict[str, str]:
     return parsed
 
 
+def load_cache(cache_path: str) -> Dict[str, Any]:
+    if not os.path.exists(cache_path):
+        return {"entries": {}}
+    with open(cache_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Invalid cache format in {cache_path}: expected JSON object")
+    entries = data.get("entries", {})
+    if not isinstance(entries, dict):
+        raise RuntimeError(f"Invalid cache format in {cache_path}: 'entries' must be an object")
+    return data
+
+
+def save_cache(cache_path: str, cache: Dict[str, Any]) -> None:
+    cache_dir = os.path.dirname(cache_path)
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump(cache, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def purge_cache(cache_path: str) -> int:
+    if os.path.exists(cache_path):
+        os.remove(cache_path)
+        log(f"Purged cache file: {cache_path}")
+    else:
+        log(f"No cache file found at {cache_path}. Nothing to purge.")
+    return 0
+
+
+def make_cache_key(base_url: str, module_name: str, attr_type: str, value: str, module_config: Dict[str, Any]) -> str:
+    key_payload = {
+        "base_url": base_url.rstrip("/"),
+        "module": module_name,
+        "type": attr_type,
+        "value": value,
+        "module_config": module_config,
+    }
+    return json.dumps(key_payload, sort_keys=True, separators=(",", ":"))
+
+
+def get_cached_response(
+    cache: Dict[str, Any],
+    key: str,
+    now: int,
+    ttl_seconds: int
+) -> Optional[Dict[str, Any]]:
+    entries = cache.get("entries", {})
+    if not isinstance(entries, dict):
+        return None
+    entry = entries.get(key)
+    if not isinstance(entry, dict):
+        return None
+    cached_at = entry.get("cached_at")
+    response = entry.get("response")
+    if not isinstance(cached_at, int) or response is None:
+        return None
+    if now - cached_at > ttl_seconds:
+        return None
+    return {"cached_at": cached_at, "response": response}
+
+
+def set_cached_response(cache: Dict[str, Any], key: str, response: Dict[str, Any], now: int) -> None:
+    entries = cache.setdefault("entries", {})
+    if not isinstance(entries, dict):
+        cache["entries"] = {}
+        entries = cache["entries"]
+    entries[key] = {
+        "cached_at": now,
+        "response": response,
+    }
+
+
 def configure_module(
     modules: List[Dict[str, Any]],
     config_path: str,
@@ -526,8 +603,31 @@ def main() -> int:
         dest="modules",
         help="Only query specific module(s); can be repeated or passed as comma-separated names",
     )
+    parser.add_argument(
+        "--cache-file",
+        default=DEFAULT_CACHE_PATH,
+        help=f"Path to local response cache file (default: {DEFAULT_CACHE_PATH})",
+    )
+    parser.add_argument(
+        "--cache-ttl-seconds",
+        type=int,
+        default=DEFAULT_CACHE_TTL_SECONDS,
+        help=f"Cache TTL in seconds (default: {DEFAULT_CACHE_TTL_SECONDS}, i.e., 12 hours)",
+    )
+    parser.add_argument(
+        "--purge-cache",
+        action="store_true",
+        help="Delete the local cache file and exit",
+    )
 
     args = parser.parse_args()
+
+    if args.cache_ttl_seconds < 0:
+        print("[!] --cache-ttl-seconds must be >= 0", file=sys.stderr)
+        return 1
+
+    if args.purge_cache:
+        return purge_cache(args.cache_file)
 
     try:
         modules = fetch_modules(args.url)
@@ -612,6 +712,12 @@ def main() -> int:
         candidate_types = candidate_types[:1]
 
     any_queried = False
+    cache_dirty = False
+    try:
+        cache = load_cache(args.cache_file)
+    except Exception as e:
+        print(f"[!] Unable to load cache file {args.cache_file}: {e}", file=sys.stderr)
+        return 1
 
     for attr_type, reason in candidate_types:
         matching_modules = find_modules_for_type(modules, attr_type)
@@ -646,7 +752,28 @@ def main() -> int:
                     f"Run with --configure-module {name} to save them in {args.config_file}."
                 )
             try:
-                response = query_module(args.url, module, name, attr_type, args.value, module_config=module_config)
+                cache_key = make_cache_key(args.url, name, attr_type, args.value, module_config)
+                cached = get_cached_response(
+                    cache,
+                    cache_key,
+                    now=int(time.time()),
+                    ttl_seconds=args.cache_ttl_seconds,
+                )
+                if cached is not None:
+                    response = cached["response"]
+                    log("cache: hit")
+                else:
+                    response = query_module(
+                        args.url,
+                        module,
+                        name,
+                        attr_type,
+                        args.value,
+                        module_config=module_config
+                    )
+                    set_cached_response(cache, cache_key, response, now=int(time.time()))
+                    cache_dirty = True
+                    log("cache: miss")
                 any_queried = True
                 if args.raw:
                     print(json.dumps(response, indent=2, sort_keys=True))
@@ -659,6 +786,13 @@ def main() -> int:
                 log(f"HTTP error: {e}")
             except Exception as e:
                 log(f"query failed: {e}")
+
+    if cache_dirty:
+        try:
+            save_cache(args.cache_file, cache)
+        except Exception as e:
+            print(f"[!] Unable to save cache file {args.cache_file}: {e}", file=sys.stderr)
+            return 1
 
     if not any_queried:
         log("\nNo module query was executed successfully.")

@@ -93,6 +93,33 @@ python3 bin/cli.py --config-file /path/to/config.json ...
 - `--all-guesses` – query all guessed types (instead of only the best match).
 - `--raw` – print raw JSON responses.
 - `--module` – limit queries to specific module name(s).
+- `--cache-file` – cache file path for module responses.
+- `--cache-ttl-seconds` – cache TTL in seconds (default: `43200`, i.e. 12 hours).
+- `--purge-cache` – delete the local cache file and exit.
+
+## Response cache
+
+To reduce API calls and improve response times, module query responses are cached locally by default.
+
+- Default cache file:
+
+```text
+~/.cache/misp-modules-cli/cache.json
+```
+
+- Default TTL: 12 hours (`43200` seconds)
+
+You can override the cache TTL per run:
+
+```bash
+python3 bin/cli.py --value 8.8.8.8 --cache-ttl-seconds 3600
+```
+
+Purge the local cache:
+
+```bash
+python3 bin/cli.py --purge-cache
+```
 
 See all CLI options:
 
