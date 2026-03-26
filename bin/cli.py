@@ -628,13 +628,14 @@ def main() -> int:
             name = module.get("name", "<unknown>")
             print(f"\n=== {name} / {attr_type} ===")
             module_config: Dict[str, Any] = {}
+            config: Dict[str, Any] = {}
             if isinstance(module_configs, dict):
                 loaded_module_config = module_configs.get(name, {})
                 if isinstance(loaded_module_config, dict):
                     config = loaded_module_config
                     module_config["config"] = config
             expected_keys = get_module_config_keys(module)
-            missing_keys = [k for k in expected_keys if k not in module_config]
+            missing_keys = [k for k in expected_keys if k not in config]
             if missing_keys:
                 print(
                     f"note: missing config keys for module '{name}': {', '.join(sorted(missing_keys))}. "
