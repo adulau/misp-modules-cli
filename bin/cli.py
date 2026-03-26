@@ -62,6 +62,18 @@ def is_empty_module_response(response: Any) -> bool:
     return False
 
 
+def redact_config_keys(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            k: redact_config_keys(v)
+            for k, v in value.items()
+            if k != "config"
+        }
+    if isinstance(value, list):
+        return [redact_config_keys(item) for item in value]
+    return value
+
+
 def get_valid_types(describe_types: Dict[str, Any]) -> set[str]:
     types = describe_types.get("types", [])
     return set(types) if isinstance(types, list) else set()
@@ -923,6 +935,8 @@ def main() -> int:
                 any_queried = True
                 response_is_empty = is_empty_module_response(response)
                 include_in_output = args.show_empty_results or not response_is_empty
+                redacted_query_parameters = redact_config_keys(query_parameters)
+                redacted_response = redact_config_keys(response)
                 if include_in_output:
                     markdown_records.append({
                         "attribute_type": attr_type,
@@ -931,25 +945,25 @@ def main() -> int:
                         "status": "success",
                         "cache": cache_status,
                         "queried_at": queried_at,
-                        "query_parameters": query_parameters,
-                        "response": response,
+                        "query_parameters": redacted_query_parameters,
+                        "response": redacted_response,
                     })
                     merged_output["results"].append({
                         "attribute_type": attr_type,
                         "reason": reason,
                         "module": name,
-                        "response": response,
+                        "response": redacted_response,
                     })
                 elif not suppress_standard_json_output:
                     log("empty response omitted (use --show-empty-results to include it)")
                 if args.raw:
                     if include_in_output and not args.unified_output and not suppress_standard_json_output:
-                        print(json.dumps(response, indent=2, sort_keys=True))
+                        print(json.dumps(redacted_response, indent=2, sort_keys=True))
                 else:
                     if isinstance(response, dict) and "error" in response:
                         log(f"error: {response['error']}")
                     elif include_in_output and not args.unified_output and not suppress_standard_json_output:
-                        print(json.dumps(response, indent=2, sort_keys=True))
+                        print(json.dumps(redacted_response, indent=2, sort_keys=True))
             except requests.HTTPError as e:
                 log(f"HTTP error: {e}")
                 markdown_records.append({
@@ -959,7 +973,7 @@ def main() -> int:
                     "status": "error",
                     "cache": "n/a",
                     "queried_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
-                    "query_parameters": query_parameters,
+                    "query_parameters": redact_config_keys(query_parameters),
                     "error": str(e),
                     "response": {"error": str(e)},
                 })
@@ -972,7 +986,7 @@ def main() -> int:
                     "status": "error",
                     "cache": "n/a",
                     "queried_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
-                    "query_parameters": query_parameters,
+                    "query_parameters": redact_config_keys(query_parameters),
                     "error": str(e),
                     "response": {"error": str(e)},
                 })
