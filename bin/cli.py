@@ -324,6 +324,32 @@ def format_markdown_output(
     selected_modules: List[str],
     records: List[Dict[str, Any]]
 ) -> str:
+    def to_inline(value: Any) -> str:
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, sort_keys=True)
+        return str(value)
+
+    def response_to_table(response: Any) -> List[str]:
+        if isinstance(response, dict):
+            if not response:
+                return ["| Key | Value |", "| --- | --- |", "| _(empty)_ |  |"]
+            lines = ["| Key | Value |", "| --- | --- |"]
+            for key in sorted(response.keys()):
+                safe_key = str(key).replace("\n", " ").replace("|", "\\|")
+                safe_value = to_inline(response[key]).replace("\n", " ").replace("|", "\\|")
+                lines.append(f"| `{safe_key}` | `{safe_value}` |")
+            return lines
+        if isinstance(response, list):
+            if not response:
+                return ["| Index | Value |", "| --- | --- |", "| 0 | _(empty)_ |"]
+            lines = ["| Index | Value |", "| --- | --- |"]
+            for idx, item in enumerate(response):
+                safe_value = to_inline(item).replace("\n", " ").replace("|", "\\|")
+                lines.append(f"| `{idx}` | `{safe_value}` |")
+            return lines
+        safe_value = str(response).replace("\n", " ").replace("|", "\\|")
+        return ["| Value |", "| --- |", f"| `{safe_value}` |"]
+
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
     success_count = sum(1 for r in records if r.get("status") == "success")
     failed_count = sum(1 for r in records if r.get("status") == "error")
@@ -374,15 +400,11 @@ def format_markdown_output(
             "",
             "#### Query Parameters",
             "",
-            "```json",
-            json.dumps(record.get("query_parameters", {}), indent=2, sort_keys=True),
-            "```",
+            *response_to_table(record.get("query_parameters", {})),
             "",
             "#### Response",
             "",
-            "```json",
-            json.dumps(record.get("response", {"error": record.get("error", "unknown error")}), indent=2, sort_keys=True),
-            "```",
+            *response_to_table(record.get("response", {"error": record.get("error", "unknown error")})),
             "",
         ])
     return "\n".join(lines)
@@ -707,6 +729,7 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+    suppress_standard_json_output = args.markdown_output is not None
 
     if args.cache_ttl_seconds < 0:
         print("[!] --cache-ttl-seconds must be >= 0", file=sys.stderr)
@@ -896,12 +919,12 @@ def main() -> int:
                     "response": response,
                 })
                 if args.raw:
-                    if not args.unified_output:
+                    if not args.unified_output and not suppress_standard_json_output:
                         print(json.dumps(response, indent=2, sort_keys=True))
                 else:
                     if isinstance(response, dict) and "error" in response:
                         log(f"error: {response['error']}")
-                    elif not args.unified_output:
+                    elif not args.unified_output and not suppress_standard_json_output:
                         print(json.dumps(response, indent=2, sort_keys=True))
             except requests.HTTPError as e:
                 log(f"HTTP error: {e}")
@@ -930,7 +953,7 @@ def main() -> int:
                     "response": {"error": str(e)},
                 })
 
-    if args.unified_output:
+    if args.unified_output and not suppress_standard_json_output:
         print(json.dumps(merged_output, indent=2, sort_keys=True))
 
     if args.markdown_output is not None:
