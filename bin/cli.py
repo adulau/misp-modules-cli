@@ -48,6 +48,20 @@ def fetch_describe_types(describe_types_url: str, timeout: int = 20) -> Dict[str
     return data["result"]
 
 
+def is_empty_module_response(response: Any) -> bool:
+    if response is None:
+        return True
+    if isinstance(response, list):
+        return len(response) == 0
+    if isinstance(response, dict):
+        if not response:
+            return True
+        if "results" in response and response["results"] in (None, [], {}):
+            remaining_keys = [k for k in response.keys() if k != "results"]
+            return len(remaining_keys) == 0
+    return False
+
+
 def get_valid_types(describe_types: Dict[str, Any]) -> set[str]:
     types = describe_types.get("types", [])
     return set(types) if isinstance(types, list) else set()
@@ -668,6 +682,11 @@ def main() -> int:
         help="Print raw JSON responses",
     )
     parser.add_argument(
+        "--show-empty-results",
+        action="store_true",
+        help="Include empty module responses in stdout and unified output",
+    )
+    parser.add_argument(
         "--unified-output",
         action="store_true",
         help="Print one merged JSON object containing all module query results",
@@ -902,29 +921,34 @@ def main() -> int:
                     cache_status = "miss"
                     log("cache: miss")
                 any_queried = True
-                markdown_records.append({
-                    "attribute_type": attr_type,
-                    "reason": reason,
-                    "module": name,
-                    "status": "success",
-                    "cache": cache_status,
-                    "queried_at": queried_at,
-                    "query_parameters": query_parameters,
-                    "response": response,
-                })
-                merged_output["results"].append({
-                    "attribute_type": attr_type,
-                    "reason": reason,
-                    "module": name,
-                    "response": response,
-                })
+                response_is_empty = is_empty_module_response(response)
+                include_in_output = args.show_empty_results or not response_is_empty
+                if include_in_output:
+                    markdown_records.append({
+                        "attribute_type": attr_type,
+                        "reason": reason,
+                        "module": name,
+                        "status": "success",
+                        "cache": cache_status,
+                        "queried_at": queried_at,
+                        "query_parameters": query_parameters,
+                        "response": response,
+                    })
+                    merged_output["results"].append({
+                        "attribute_type": attr_type,
+                        "reason": reason,
+                        "module": name,
+                        "response": response,
+                    })
+                elif not suppress_standard_json_output:
+                    log("empty response omitted (use --show-empty-results to include it)")
                 if args.raw:
-                    if not args.unified_output and not suppress_standard_json_output:
+                    if include_in_output and not args.unified_output and not suppress_standard_json_output:
                         print(json.dumps(response, indent=2, sort_keys=True))
                 else:
                     if isinstance(response, dict) and "error" in response:
                         log(f"error: {response['error']}")
-                    elif not args.unified_output and not suppress_standard_json_output:
+                    elif include_in_output and not args.unified_output and not suppress_standard_json_output:
                         print(json.dumps(response, indent=2, sort_keys=True))
             except requests.HTTPError as e:
                 log(f"HTTP error: {e}")

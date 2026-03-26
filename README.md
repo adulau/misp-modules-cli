@@ -109,6 +109,7 @@ python3 bin/cli.py --config-file /path/to/config.json ...
 - `--show-guesses` – show guessed attribute types.
 - `--all-guesses` – query all guessed types (instead of only the best match).
 - `--raw` – print raw JSON responses.
+- `--show-empty-results` – include empty module responses in output (hidden by default).
 - `--unified-output` – print one merged JSON object containing all module query results.
 - `--markdown-output [PATH]` – print a markdown report (or write it to `PATH`) with summary, query timestamps, query parameters, and responses.
 - `--module` – limit queries to specific module name(s).
