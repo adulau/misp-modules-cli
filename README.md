@@ -1,45 +1,110 @@
 # misp-modules-cli
 
-A convenient command line interface to [misp-modules](https://github.com/MISP/misp-modules).
+`misp-modules-cli` is a lightweight command-line client for querying [MISP expansion modules](https://github.com/MISP/misp-modules) from a local or remote `misp-modules` service.
 
-# Requirements
+It can:
 
-- [misp-modules](https://github.com/MISP/misp-modules)
+- Auto-detect likely MISP attribute types from a raw value.
+- Query matching expansion modules.
+- Restrict queries to one or more specific modules.
+- List supported input types from live module introspection.
+- Store per-module configuration (API keys, usernames, etc.) in a local config file.
 
-# Usage
+## Requirements
 
-## List supported MISP attribute types
+- Python 3.10+ (recommended)
+- `misp-modules` running and reachable (default: `http://127.0.0.1:6666`)
+- Python dependency:
+  - `requests`
 
-- `python3 cli.py --list-supported-types`
+Install dependency:
 
-## List supported MISP attribute types along with their respective MISP module
+```bash
+python3 -m pip install requests
+```
 
-- `python3 cli.py --list-supported-types --verbose-types`
+## Quick start
 
-## Querying the misp-modules
+### 1) List supported input types
 
-~~~bash
-python3 cli.py --value 8.8.8.8 --show-guesses
-python3 cli.py --value CVE-2024-3094 --show-guesses
-python3 cli.py --type domain --value circl.lu
-python3 cli.py --type domain --value circl.lu --module circl_passivedns
-python3 cli.py --type domain --value circl.lu --module circl_passivedns,dns
-python3 cli.py --type domain --value circl.lu --module circl_passivedns --module dns
-~~~
+```bash
+python3 bin/cli.py --list-supported-types
+python3 bin/cli.py --list-supported-types --verbose-types
+```
 
-## Configuring module credentials/settings
+### 2) Query with automatic type guessing
 
-Some modules require credentials (for example `circl_passivedns`). You can configure these settings once using module introspection and store them in a config file for future runs.
+```bash
+python3 bin/cli.py --value 8.8.8.8 --show-guesses
+python3 bin/cli.py --value CVE-2024-3094 --show-guesses
+```
 
-~~~bash
-# interactive prompt for settings exposed by the module
-python3 cli.py --configure-module circl_passivedns
+### 3) Query with an explicit MISP type
 
-# non-interactive configuration
-python3 cli.py --configure-module circl_passivedns \
+```bash
+python3 bin/cli.py --type domain --value circl.lu
+```
+
+### 4) Restrict to selected modules
+
+```bash
+python3 bin/cli.py --type domain --value circl.lu --module circl_passivedns
+python3 bin/cli.py --type domain --value circl.lu --module circl_passivedns,dns
+python3 bin/cli.py --type domain --value circl.lu --module circl_passivedns --module dns
+```
+
+## Module configuration
+
+Some modules require settings (for example credentials or API keys). You can store these once in a local config file.
+
+### Interactive configuration
+
+```bash
+python3 bin/cli.py --configure-module circl_passivedns
+```
+
+### Non-interactive configuration
+
+```bash
+python3 bin/cli.py --configure-module circl_passivedns \
   --set username=my-user \
   --set password=my-pass
-~~~
+```
 
-By default the CLI stores this in `~/.config/misp-modules-cli/config.json`.
-You can use `--config-file /path/to/file.json` to override this location.
+### Config file location
+
+Default path:
+
+```text
+~/.config/misp-modules-cli/config.json
+```
+
+Override it per run:
+
+```bash
+python3 bin/cli.py --config-file /path/to/config.json ...
+```
+
+## Useful options
+
+- `--url` – base URL of `misp-modules` service.
+- `--describe-types-url` – URL to MISP `describeTypes.json`.
+- `--show-guesses` – show guessed attribute types.
+- `--all-guesses` – query all guessed types (instead of only the best match).
+- `--raw` – print raw JSON responses.
+- `--module` – limit queries to specific module name(s).
+
+See all CLI options:
+
+```bash
+python3 bin/cli.py --help
+```
+
+## Exit behavior
+
+- Returns non-zero when required input is missing or API/introspection cannot be fetched.
+- Prints errors and diagnostic information to stderr.
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). See [LICENSE](./LICENSE).
