@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+from datetime import datetime, timezone
 import ipaddress
 import json
 import os
@@ -316,6 +317,77 @@ def query_module(
     return r.json()
 
 
+def format_markdown_output(
+    input_value: str,
+    explicit_type: Optional[str],
+    all_guesses: bool,
+    selected_modules: List[str],
+    records: List[Dict[str, Any]]
+) -> str:
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    success_count = sum(1 for r in records if r.get("status") == "success")
+    failed_count = sum(1 for r in records if r.get("status") == "error")
+    cache_hits = sum(1 for r in records if r.get("cache") == "hit")
+    cache_misses = sum(1 for r in records if r.get("cache") == "miss")
+    queried_at_values = [
+        r.get("queried_at")
+        for r in records
+        if isinstance(r.get("queried_at"), str)
+    ]
+    first_query = min(queried_at_values) if queried_at_values else "n/a"
+    last_query = max(queried_at_values) if queried_at_values else "n/a"
+
+    lines = [
+        "# MISP Modules Query Report",
+        "",
+        "## Summary",
+        "",
+        f"- Generated at (UTC): `{generated_at}`",
+        f"- Input value: `{input_value}`",
+        f"- Explicit type: `{explicit_type or 'auto-guessed'}`",
+        f"- Query all guesses: `{all_guesses}`",
+        f"- Selected modules filter: `{', '.join(selected_modules) if selected_modules else 'none'}`",
+        f"- Total module query attempts: `{len(records)}`",
+        f"- Successful queries: `{success_count}`",
+        f"- Failed queries: `{failed_count}`",
+        f"- Cache hits: `{cache_hits}`",
+        f"- Cache misses: `{cache_misses}`",
+        f"- First query timestamp (UTC): `{first_query}`",
+        f"- Last query timestamp (UTC): `{last_query}`",
+        "",
+        "## Detailed Results",
+        "",
+    ]
+
+    if not records:
+        lines.append("_No module query records were generated._")
+        return "\n".join(lines) + "\n"
+
+    for idx, record in enumerate(records, start=1):
+        lines.extend([
+            f"### {idx}. Module `{record.get('module', '<unknown>')}` / Type `{record.get('attribute_type', '<unknown>')}`",
+            "",
+            f"- Status: `{record.get('status', 'unknown')}`",
+            f"- Query reason: `{record.get('reason', 'n/a')}`",
+            f"- Queried at (UTC): `{record.get('queried_at', 'n/a')}`",
+            f"- Cache: `{record.get('cache', 'n/a')}`",
+            "",
+            "#### Query Parameters",
+            "",
+            "```json",
+            json.dumps(record.get("query_parameters", {}), indent=2, sort_keys=True),
+            "```",
+            "",
+            "#### Response",
+            "",
+            "```json",
+            json.dumps(record.get("response", {"error": record.get("error", "unknown error")}), indent=2, sort_keys=True),
+            "```",
+            "",
+        ])
+    return "\n".join(lines)
+
+
 def print_matches_for_type(attr_type: str, modules: List[Dict[str, Any]]) -> None:
     log(f"\n### Attribute type: {attr_type}")
     if not modules:
@@ -579,6 +651,15 @@ def main() -> int:
         help="Print one merged JSON object containing all module query results",
     )
     parser.add_argument(
+        "--markdown-output",
+        nargs="?",
+        const="-",
+        help=(
+            "Emit a markdown report of all query attempts. "
+            "Optionally pass a file path to write the report; default prints to stdout."
+        ),
+    )
+    parser.add_argument(
         "--list-supported-types",
         action="store_true",
         help="List input attribute types supported by installed expansion modules and exit",
@@ -733,6 +814,7 @@ def main() -> int:
         },
         "results": [],
     }
+    markdown_records: List[Dict[str, Any]] = []
 
     for attr_type, reason in candidate_types:
         matching_modules = find_modules_for_type(modules, attr_type)
@@ -752,6 +834,7 @@ def main() -> int:
         for module in matching_modules:
             name = module.get("name", "<unknown>")
             log(f"\n=== {name} / {attr_type} ===")
+            query_parameters: Dict[str, Any] = {}
             module_config: Dict[str, Any] = {}
             config: Dict[str, Any] = {}
             if isinstance(module_configs, dict):
@@ -767,6 +850,10 @@ def main() -> int:
                     f"Run with --configure-module {name} to save them in {args.config_file}."
                 )
             try:
+                query_parameters = build_payload(module, name, attr_type, args.value)
+                if module_config:
+                    query_parameters.update(module_config)
+                queried_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
                 cache_key = make_cache_key(args.url, name, attr_type, args.value, module_config)
                 cached = get_cached_response(
                     cache,
@@ -776,6 +863,7 @@ def main() -> int:
                 )
                 if cached is not None:
                     response = cached["response"]
+                    cache_status = "hit"
                     log("cache: hit")
                 else:
                     response = query_module(
@@ -788,8 +876,19 @@ def main() -> int:
                     )
                     set_cached_response(cache, cache_key, response, now=int(time.time()))
                     cache_dirty = True
+                    cache_status = "miss"
                     log("cache: miss")
                 any_queried = True
+                markdown_records.append({
+                    "attribute_type": attr_type,
+                    "reason": reason,
+                    "module": name,
+                    "status": "success",
+                    "cache": cache_status,
+                    "queried_at": queried_at,
+                    "query_parameters": query_parameters,
+                    "response": response,
+                })
                 merged_output["results"].append({
                     "attribute_type": attr_type,
                     "reason": reason,
@@ -806,11 +905,48 @@ def main() -> int:
                         print(json.dumps(response, indent=2, sort_keys=True))
             except requests.HTTPError as e:
                 log(f"HTTP error: {e}")
+                markdown_records.append({
+                    "attribute_type": attr_type,
+                    "reason": reason,
+                    "module": name,
+                    "status": "error",
+                    "cache": "n/a",
+                    "queried_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
+                    "query_parameters": query_parameters,
+                    "error": str(e),
+                    "response": {"error": str(e)},
+                })
             except Exception as e:
                 log(f"query failed: {e}")
+                markdown_records.append({
+                    "attribute_type": attr_type,
+                    "reason": reason,
+                    "module": name,
+                    "status": "error",
+                    "cache": "n/a",
+                    "queried_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ"),
+                    "query_parameters": query_parameters,
+                    "error": str(e),
+                    "response": {"error": str(e)},
+                })
 
     if args.unified_output:
         print(json.dumps(merged_output, indent=2, sort_keys=True))
+
+    if args.markdown_output is not None:
+        markdown_report = format_markdown_output(
+            input_value=args.value,
+            explicit_type=args.attr_type,
+            all_guesses=bool(args.all_guesses),
+            selected_modules=selected_modules,
+            records=markdown_records,
+        )
+        if args.markdown_output == "-":
+            print(markdown_report)
+        else:
+            with open(args.markdown_output, "w", encoding="utf-8") as f:
+                f.write(markdown_report)
+            log(f"Wrote markdown report to {args.markdown_output}")
 
     if cache_dirty:
         try:

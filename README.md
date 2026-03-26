@@ -60,6 +60,16 @@ python3 bin/cli.py --value 8.8.8.8 --unified-output
 python3 bin/cli.py --type domain --value circl.lu --module circl_passivedns,dns --unified-output
 ```
 
+### 6) Emit markdown report output with summary + full query details
+
+```bash
+# Print markdown report to stdout
+python3 bin/cli.py --value 8.8.8.8 --markdown-output
+
+# Write markdown report to a file
+python3 bin/cli.py --type domain --value circl.lu --markdown-output report.md
+```
+
 ## Module configuration
 
 Some modules require settings (for example credentials or API keys). You can store these once in a local config file.
@@ -100,6 +110,7 @@ python3 bin/cli.py --config-file /path/to/config.json ...
 - `--all-guesses` – query all guessed types (instead of only the best match).
 - `--raw` – print raw JSON responses.
 - `--unified-output` – print one merged JSON object containing all module query results.
+- `--markdown-output [PATH]` – print a markdown report (or write it to `PATH`) with summary, query timestamps, query parameters, and responses.
 - `--module` – limit queries to specific module name(s).
 - `--cache-file` – cache file path for module responses.
 - `--cache-ttl-seconds` – cache TTL in seconds (default: `43200`, i.e. 12 hours).
