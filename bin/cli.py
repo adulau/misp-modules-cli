@@ -3,9 +3,10 @@
 import argparse
 import ipaddress
 import json
+import os
 import re
 import sys
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -15,6 +16,7 @@ DEFAULT_MODULES_URL = "http://127.0.0.1:6666"
 DEFAULT_DESCRIBE_TYPES_URL = (
     "https://raw.githubusercontent.com/MISP/MISP/refs/heads/2.5/describeTypes.json"
 )
+DEFAULT_CONFIG_PATH = os.path.expanduser("~/.config/misp-modules-cli/config.json")
 
 
 def fetch_json(url: str, timeout: int = 20) -> Any:
@@ -267,8 +269,17 @@ def build_payload(module_name: str, attr_type: str, value: str) -> Dict[str, Any
     }
 
 
-def query_module(base_url: str, module_name: str, attr_type: str, value: str, timeout: int = 60) -> Dict[str, Any]:
+def query_module(
+    base_url: str,
+    module_name: str,
+    attr_type: str,
+    value: str,
+    module_config: Optional[Dict[str, Any]] = None,
+    timeout: int = 60
+) -> Dict[str, Any]:
     payload = build_payload(module_name, attr_type, value)
+    if module_config:
+        payload.update(module_config)
     r = requests.post(
         f"{base_url.rstrip('/')}/query",
         json=payload,
@@ -305,6 +316,106 @@ def list_supported_types(modules: List[Dict[str, Any]], valid_types: set[str], v
         if verbose:
             for module_name in mapping[attr_type]:
                 print(f"    - {module_name}")
+
+
+def get_module_config_keys(module: Dict[str, Any]) -> List[str]:
+    moduleconfig = module.get("meta").get("config")
+    print(moduleconfig)
+    if isinstance(moduleconfig, list):
+        return [k for k in moduleconfig if isinstance(k, str)]
+    if isinstance(moduleconfig, dict):
+        return [k for k in moduleconfig.keys() if isinstance(k, str)]
+    return []
+
+
+def load_config(config_path: str) -> Dict[str, Any]:
+    if not os.path.exists(config_path):
+        return {"modules": {}}
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Invalid config format in {config_path}: expected JSON object")
+    modules_cfg = data.get("modules", {})
+    if not isinstance(modules_cfg, dict):
+        raise RuntimeError(f"Invalid config format in {config_path}: 'modules' must be an object")
+    return data
+
+
+def save_config(config_path: str, config: Dict[str, Any]) -> None:
+    config_dir = os.path.dirname(config_path)
+    if config_dir:
+        os.makedirs(config_dir, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def parse_set_args(values: Optional[List[str]]) -> Dict[str, str]:
+    parsed: Dict[str, str] = {}
+    for raw in values or []:
+        if "=" not in raw:
+            raise ValueError(f"Invalid --set value '{raw}'. Expected KEY=VALUE.")
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Invalid --set value '{raw}'. KEY must not be empty.")
+        parsed[key] = value
+    return parsed
+
+
+def configure_module(
+    modules: List[Dict[str, Any]],
+    config_path: str,
+    module_name: str,
+    set_values: Dict[str, str]
+) -> int:
+    module = next((m for m in modules if m.get("name") == module_name), None)
+    if module is None:
+        print(f"[!] Module '{module_name}' was not found in introspection (/modules).", file=sys.stderr)
+        return 1
+
+    config_keys = get_module_config_keys(module)
+    if not config_keys:
+        print(f"Module '{module_name}' does not declare configurable settings via introspection.")
+        return 0
+
+    updates: Dict[str, str] = {}
+    for key in config_keys:
+        if key in set_values:
+            updates[key] = set_values[key]
+            continue
+        current = "<unset>"
+        try:
+            cfg = load_config(config_path)
+            module_cfg = cfg.get("modules", {}).get(module_name, {})
+            if isinstance(module_cfg, dict) and key in module_cfg:
+                current = "<configured>"
+        except Exception:
+            pass
+        prompt = f"Set value for '{key}' (leave blank to keep {current}): "
+        value = input(prompt).strip()
+        if value:
+            updates[key] = value
+
+    config = load_config(config_path)
+    modules_cfg = config.setdefault("modules", {})
+    if not isinstance(modules_cfg, dict):
+        raise RuntimeError(f"Invalid config format in {config_path}: 'modules' must be an object")
+    module_cfg = modules_cfg.setdefault(module_name, {})
+    if not isinstance(module_cfg, dict):
+        module_cfg = {}
+        modules_cfg[module_name] = module_cfg
+
+    module_cfg.update(updates)
+    save_config(config_path, config)
+
+    print(f"Saved configuration for module '{module_name}' to {config_path}.")
+    print("Configured keys:")
+    for key in sorted(module_cfg.keys()):
+        print(f"  - {key}")
+    return 0
 
 
 def main() -> int:
@@ -355,6 +466,20 @@ def main() -> int:
         action="store_true",
         help="With --list-supported-types, also list the modules supporting each type",
     )
+    parser.add_argument(
+        "--config-file",
+        default=DEFAULT_CONFIG_PATH,
+        help=f"Path to CLI configuration file (default: {DEFAULT_CONFIG_PATH})",
+    )
+    parser.add_argument(
+        "--configure-module",
+        help="Configure a module's settings discovered via introspection and save them to --config-file",
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        help="With --configure-module, provide KEY=VALUE (can be repeated) to avoid prompts",
+    )
 
     args = parser.parse_args()
 
@@ -375,8 +500,23 @@ def main() -> int:
         list_supported_types(modules, valid_types, verbose=args.verbose_types)
         return 0
 
+    if args.configure_module:
+        try:
+            set_values = parse_set_args(args.set)
+            return configure_module(modules, args.config_file, args.configure_module, set_values)
+        except Exception as e:
+            print(f"[!] Unable to configure module: {e}", file=sys.stderr)
+            return 1
+
     if not args.value:
         print("[!] --value is required unless --list-supported-types is used", file=sys.stderr)
+        return 1
+
+    try:
+        config = load_config(args.config_file)
+        module_configs = config.get("modules", {}) if isinstance(config, dict) else {}
+    except Exception as e:
+        print(f"[!] Unable to load config file {args.config_file}: {e}", file=sys.stderr)
         return 1
 
     supported_input_types = get_supported_input_types(modules)
@@ -423,8 +563,20 @@ def main() -> int:
         for module in matching_modules:
             name = module.get("name", "<unknown>")
             print(f"\n=== {name} / {attr_type} ===")
+            module_config: Dict[str, Any] = {}
+            if isinstance(module_configs, dict):
+                loaded_module_config = module_configs.get(name, {})
+                if isinstance(loaded_module_config, dict):
+                    module_config = loaded_module_config
+            expected_keys = get_module_config_keys(module)
+            missing_keys = [k for k in expected_keys if k not in module_config]
+            if missing_keys:
+                print(
+                    f"note: missing config keys for module '{name}': {', '.join(sorted(missing_keys))}. "
+                    f"Run with --configure-module {name} to save them in {args.config_file}."
+                )
             try:
-                response = query_module(args.url, name, attr_type, args.value)
+                response = query_module(args.url, name, attr_type, args.value, module_config=module_config)
                 any_queried = True
                 if args.raw:
                     print(json.dumps(response, indent=2, sort_keys=True))
