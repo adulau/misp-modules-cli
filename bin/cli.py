@@ -350,9 +350,41 @@ def format_markdown_output(
     selected_modules: List[str],
     records: List[Dict[str, Any]]
 ) -> str:
+    def scalar_to_text(value: Any) -> str:
+        return str(value)
+
+    def format_nested_value(value: Any, indent_level: int = 0) -> List[str]:
+        indent_prefix = "&nbsp;" * (indent_level * 2)
+        if isinstance(value, dict):
+            if not value:
+                return [f"{indent_prefix}(empty object)"]
+            lines: List[str] = []
+            for key in sorted(value.keys(), key=lambda item: str(item)):
+                child = value[key]
+                if isinstance(child, (dict, list)):
+                    nested = format_nested_value(child, indent_level + 1)
+                    lines.append(f"{indent_prefix}{key}:")
+                    lines.extend(nested)
+                else:
+                    lines.append(f"{indent_prefix}{key}: {scalar_to_text(child)}")
+            return lines
+        if isinstance(value, list):
+            if not value:
+                return [f"{indent_prefix}(empty list)"]
+            lines: List[str] = []
+            for idx, item in enumerate(value):
+                if isinstance(item, (dict, list)):
+                    nested = format_nested_value(item, indent_level + 1)
+                    lines.append(f"{indent_prefix}[{idx}]:")
+                    lines.extend(nested)
+                else:
+                    lines.append(f"{indent_prefix}[{idx}]: {scalar_to_text(item)}")
+            return lines
+        return [f"{indent_prefix}{scalar_to_text(value)}"]
+
     def to_inline(value: Any) -> str:
         if isinstance(value, (dict, list)):
-            return json.dumps(value, sort_keys=True)
+            return "<br>".join(format_nested_value(value))
         return str(value)
 
     def response_to_table(response: Any) -> List[str]:
@@ -363,7 +395,7 @@ def format_markdown_output(
             for key in sorted(response.keys()):
                 safe_key = str(key).replace("\n", " ").replace("|", "\\|")
                 safe_value = to_inline(response[key]).replace("\n", " ").replace("|", "\\|")
-                lines.append(f"| `{safe_key}` | `{safe_value}` |")
+                lines.append(f"| `{safe_key}` | {safe_value} |")
             return lines
         if isinstance(response, list):
             if not response:
@@ -371,7 +403,7 @@ def format_markdown_output(
             lines = ["| Index | Value |", "| --- | --- |"]
             for idx, item in enumerate(response):
                 safe_value = to_inline(item).replace("\n", " ").replace("|", "\\|")
-                lines.append(f"| `{idx}` | `{safe_value}` |")
+                lines.append(f"| `{idx}` | {safe_value} |")
             return lines
         safe_value = str(response).replace("\n", " ").replace("|", "\\|")
         return ["| Value |", "| --- |", f"| `{safe_value}` |"]
