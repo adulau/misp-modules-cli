@@ -22,6 +22,9 @@ A convenient command line interface to [misp-modules](https://github.com/MISP/mi
 python3 cli.py --value 8.8.8.8 --show-guesses
 python3 cli.py --value CVE-2024-3094 --show-guesses
 python3 cli.py --type domain --value circl.lu
+python3 cli.py --type domain --value circl.lu --module circl_passivedns
+python3 cli.py --type domain --value circl.lu --module circl_passivedns,dns
+python3 cli.py --type domain --value circl.lu --module circl_passivedns --module dns
 ~~~
 
 ## Configuring module credentials/settings
@@ -40,4 +43,3 @@ python3 cli.py --configure-module circl_passivedns \
 
 By default the CLI stores this in `~/.config/misp-modules-cli/config.json`.
 You can use `--config-file /path/to/file.json` to override this location.
-

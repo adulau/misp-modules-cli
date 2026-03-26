@@ -299,7 +299,6 @@ def query_module(
     payload = build_payload(module, module_name, attr_type, value)
     if module_config:
         payload.update(module_config)
-        print(payload)
     r = requests.post(
         f"{base_url.rstrip('/')}/query",
         json=payload,
@@ -340,12 +339,29 @@ def list_supported_types(modules: List[Dict[str, Any]], valid_types: set[str], v
 
 def get_module_config_keys(module: Dict[str, Any]) -> List[str]:
     moduleconfig = module.get("meta").get("config")
-    print(moduleconfig)
     if isinstance(moduleconfig, list):
         return [k for k in moduleconfig if isinstance(k, str)]
     if isinstance(moduleconfig, dict):
         return [k for k in moduleconfig.keys() if isinstance(k, str)]
     return []
+
+
+def parse_modules_args(values: Optional[List[str]]) -> List[str]:
+    modules: List[str] = []
+    for raw in values or []:
+        for candidate in raw.split(","):
+            name = candidate.strip()
+            if not name:
+                continue
+            modules.append(name)
+    deduped: List[str] = []
+    seen = set()
+    for name in modules:
+        if name in seen:
+            continue
+        seen.add(name)
+        deduped.append(name)
+    return deduped
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
@@ -500,6 +516,12 @@ def main() -> int:
         action="append",
         help="With --configure-module, provide KEY=VALUE (can be repeated) to avoid prompts",
     )
+    parser.add_argument(
+        "--module",
+        action="append",
+        dest="modules",
+        help="Only query specific module(s); can be repeated or passed as comma-separated names",
+    )
 
     args = parser.parse_args()
 
@@ -540,6 +562,23 @@ def main() -> int:
         return 1
 
     supported_input_types = get_supported_input_types(modules)
+    selected_modules = parse_modules_args(args.modules)
+
+    if selected_modules:
+        available_modules = {
+            m.get("name")
+            for m in modules
+            if isinstance(m.get("name"), str)
+        }
+        missing_modules = [m for m in selected_modules if m not in available_modules]
+        if missing_modules:
+            print(
+                "[!] Unknown module name(s): "
+                + ", ".join(sorted(missing_modules))
+                + ". Use /modules introspection to list available names.",
+                file=sys.stderr,
+            )
+            return 1
 
     if args.attr_type:
         candidate_types = [(args.attr_type, "explicitly provided by user")]
@@ -572,6 +611,11 @@ def main() -> int:
 
     for attr_type, reason in candidate_types:
         matching_modules = find_modules_for_type(modules, attr_type)
+        if selected_modules:
+            matching_modules = [
+                m for m in matching_modules
+                if m.get("name") in selected_modules
+            ]
         print_matches_for_type(attr_type, matching_modules)
 
         if not matching_modules:
