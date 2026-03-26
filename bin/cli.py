@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -262,24 +263,43 @@ def guess_attribute_types(value: str, valid_types: set[str], supported_input_typ
     return [(t, reason) for t, reason, _score in ranked]
 
 
-def build_payload(module_name: str, attr_type: str, value: str) -> Dict[str, Any]:
-    return {
-        "module": module_name,
-        attr_type: value
-    }
+def uses_misp_standard_format(module: Dict[str, Any]) -> bool:
+    mispattributes = module.get("mispattributes", {})
+    module_format = mispattributes.get("format")
+    return isinstance(module_format, str) and module_format.lower() == "misp_standard"
+
+
+def build_payload(
+    module: Dict[str, Any],
+    module_name: str,
+    attr_type: str,
+    value: str
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"module": module_name}
+    if uses_misp_standard_format(module):
+        payload["attribute"] = {
+            "type": attr_type,
+            "value": value,
+            "uuid": str(uuid.uuid4()),
+        }
+    else:
+        payload[attr_type] = value
+    return payload
 
 
 def query_module(
     base_url: str,
+    module: Dict[str, Any],
     module_name: str,
     attr_type: str,
     value: str,
     module_config: Optional[Dict[str, Any]] = None,
     timeout: int = 60
 ) -> Dict[str, Any]:
-    payload = build_payload(module_name, attr_type, value)
+    payload = build_payload(module, module_name, attr_type, value)
     if module_config:
         payload.update(module_config)
+        print(payload)
     r = requests.post(
         f"{base_url.rstrip('/')}/query",
         json=payload,
@@ -567,7 +587,8 @@ def main() -> int:
             if isinstance(module_configs, dict):
                 loaded_module_config = module_configs.get(name, {})
                 if isinstance(loaded_module_config, dict):
-                    module_config = loaded_module_config
+                    config = loaded_module_config
+                    module_config["config"] = config
             expected_keys = get_module_config_keys(module)
             missing_keys = [k for k in expected_keys if k not in module_config]
             if missing_keys:
@@ -576,7 +597,7 @@ def main() -> int:
                     f"Run with --configure-module {name} to save them in {args.config_file}."
                 )
             try:
-                response = query_module(args.url, name, attr_type, args.value, module_config=module_config)
+                response = query_module(args.url, module, name, attr_type, args.value, module_config=module_config)
                 any_queried = True
                 if args.raw:
                     print(json.dumps(response, indent=2, sort_keys=True))
