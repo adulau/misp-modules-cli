@@ -574,6 +574,11 @@ def main() -> int:
         help="Print raw JSON responses",
     )
     parser.add_argument(
+        "--unified-output",
+        action="store_true",
+        help="Print one merged JSON object containing all module query results",
+    )
+    parser.add_argument(
         "--list-supported-types",
         action="store_true",
         help="List input attribute types supported by installed expansion modules and exit",
@@ -719,6 +724,16 @@ def main() -> int:
         print(f"[!] Unable to load cache file {args.cache_file}: {e}", file=sys.stderr)
         return 1
 
+    merged_output: Dict[str, Any] = {
+        "input": {
+            "value": args.value,
+            "explicit_type": args.attr_type,
+            "all_guesses": bool(args.all_guesses),
+            "selected_modules": selected_modules,
+        },
+        "results": [],
+    }
+
     for attr_type, reason in candidate_types:
         matching_modules = find_modules_for_type(modules, attr_type)
         if selected_modules:
@@ -775,17 +790,27 @@ def main() -> int:
                     cache_dirty = True
                     log("cache: miss")
                 any_queried = True
+                merged_output["results"].append({
+                    "attribute_type": attr_type,
+                    "reason": reason,
+                    "module": name,
+                    "response": response,
+                })
                 if args.raw:
-                    print(json.dumps(response, indent=2, sort_keys=True))
+                    if not args.unified_output:
+                        print(json.dumps(response, indent=2, sort_keys=True))
                 else:
                     if isinstance(response, dict) and "error" in response:
                         log(f"error: {response['error']}")
-                    else:
+                    elif not args.unified_output:
                         print(json.dumps(response, indent=2, sort_keys=True))
             except requests.HTTPError as e:
                 log(f"HTTP error: {e}")
             except Exception as e:
                 log(f"query failed: {e}")
+
+    if args.unified_output:
+        print(json.dumps(merged_output, indent=2, sort_keys=True))
 
     if cache_dirty:
         try:

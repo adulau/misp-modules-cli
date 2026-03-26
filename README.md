@@ -53,6 +53,13 @@ python3 bin/cli.py --type domain --value circl.lu --module circl_passivedns,dns
 python3 bin/cli.py --type domain --value circl.lu --module circl_passivedns --module dns
 ```
 
+### 5) Emit unified JSON output from all queried modules
+
+```bash
+python3 bin/cli.py --value 8.8.8.8 --unified-output
+python3 bin/cli.py --type domain --value circl.lu --module circl_passivedns,dns --unified-output
+```
+
 ## Module configuration
 
 Some modules require settings (for example credentials or API keys). You can store these once in a local config file.
@@ -92,6 +99,7 @@ python3 bin/cli.py --config-file /path/to/config.json ...
 - `--show-guesses` – show guessed attribute types.
 - `--all-guesses` – query all guessed types (instead of only the best match).
 - `--raw` – print raw JSON responses.
+- `--unified-output` – print one merged JSON object containing all module query results.
 - `--module` – limit queries to specific module name(s).
 - `--cache-file` – cache file path for module responses.
 - `--cache-ttl-seconds` – cache TTL in seconds (default: `43200`, i.e. 12 hours).
