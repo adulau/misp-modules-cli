@@ -20,6 +20,10 @@ DEFAULT_DESCRIBE_TYPES_URL = (
 DEFAULT_CONFIG_PATH = os.path.expanduser("~/.config/misp-modules-cli/config.json")
 
 
+def log(message: str = "") -> None:
+    print(message, file=sys.stderr)
+
+
 def fetch_json(url: str, timeout: int = 20) -> Any:
     r = requests.get(url, timeout=timeout)
     r.raise_for_status()
@@ -310,31 +314,31 @@ def query_module(
 
 
 def print_matches_for_type(attr_type: str, modules: List[Dict[str, Any]]) -> None:
-    print(f"\n### Attribute type: {attr_type}")
+    log(f"\n### Attribute type: {attr_type}")
     if not modules:
-        print("No expansion modules support this type.")
+        log("No expansion modules support this type.")
         return
-    print(f"Found {len(modules)} module(s):")
+    log(f"Found {len(modules)} module(s):")
     for module in modules:
         name = module.get("name", "<unknown>")
         desc = module.get("meta", {}).get("description", "")
-        print(f"  - {name}: {desc}")
+        log(f"  - {name}: {desc}")
 
 
 def list_supported_types(modules: List[Dict[str, Any]], valid_types: set[str], verbose: bool = False) -> None:
     mapping = get_type_to_modules_map(modules)
 
     if not mapping:
-        print("No supported input attribute types found in installed expansion modules.")
+        log("No supported input attribute types found in installed expansion modules.")
         return
 
-    print("Supported input attribute types from installed expansion modules:\n")
+    log("Supported input attribute types from installed expansion modules:\n")
     for attr_type in sorted(mapping):
         marker = "valid" if attr_type in valid_types else "unknown"
-        print(f"- {attr_type} [{marker}] ({len(mapping[attr_type])} module(s))")
+        log(f"- {attr_type} [{marker}] ({len(mapping[attr_type])} module(s))")
         if verbose:
             for module_name in mapping[attr_type]:
-                print(f"    - {module_name}")
+                log(f"    - {module_name}")
 
 
 def get_module_config_keys(module: Dict[str, Any]) -> List[str]:
@@ -414,7 +418,7 @@ def configure_module(
 
     config_keys = get_module_config_keys(module)
     if not config_keys:
-        print(f"Module '{module_name}' does not declare configurable settings via introspection.")
+        log(f"Module '{module_name}' does not declare configurable settings via introspection.")
         return 0
 
     updates: Dict[str, str] = {}
@@ -447,10 +451,10 @@ def configure_module(
     module_cfg.update(updates)
     save_config(config_path, config)
 
-    print(f"Saved configuration for module '{module_name}' to {config_path}.")
-    print("Configured keys:")
+    log(f"Saved configuration for module '{module_name}' to {config_path}.")
+    log("Configured keys:")
     for key in sorted(module_cfg.keys()):
-        print(f"  - {key}")
+        log(f"  - {key}")
     return 0
 
 
@@ -587,21 +591,21 @@ def main() -> int:
 
         if args.show_guesses:
             if candidate_types:
-                print("Guessed attribute types:")
+                log("Guessed attribute types:")
                 for t, reason in candidate_types:
                     supported = "yes" if t in supported_input_types else "no"
-                    print(f"  - {t} (reason: {reason}, supported by installed module: {supported})")
+                    log(f"  - {t} (reason: {reason}, supported by installed module: {supported})")
             else:
-                print("No likely attribute type could be guessed.")
+                log("No likely attribute type could be guessed.")
                 return 1
 
         if not candidate_types:
-            print("No likely MISP attribute type could be guessed from the input.")
+            log("No likely MISP attribute type could be guessed from the input.")
             return 1
 
     candidate_types = [(t, r) for t, r in candidate_types if t in valid_types]
     if not candidate_types:
-        print("No valid MISP attribute type found.")
+        log("No valid MISP attribute type found.")
         return 1
 
     if not args.attr_type and not args.all_guesses:
@@ -622,11 +626,11 @@ def main() -> int:
             continue
 
         if not args.attr_type:
-            print(f"Reason: {reason}")
+            log(f"Reason: {reason}")
 
         for module in matching_modules:
             name = module.get("name", "<unknown>")
-            print(f"\n=== {name} / {attr_type} ===")
+            log(f"\n=== {name} / {attr_type} ===")
             module_config: Dict[str, Any] = {}
             config: Dict[str, Any] = {}
             if isinstance(module_configs, dict):
@@ -637,7 +641,7 @@ def main() -> int:
             expected_keys = get_module_config_keys(module)
             missing_keys = [k for k in expected_keys if k not in config]
             if missing_keys:
-                print(
+                log(
                     f"note: missing config keys for module '{name}': {', '.join(sorted(missing_keys))}. "
                     f"Run with --configure-module {name} to save them in {args.config_file}."
                 )
@@ -648,16 +652,16 @@ def main() -> int:
                     print(json.dumps(response, indent=2, sort_keys=True))
                 else:
                     if isinstance(response, dict) and "error" in response:
-                        print(f"error: {response['error']}")
+                        log(f"error: {response['error']}")
                     else:
                         print(json.dumps(response, indent=2, sort_keys=True))
             except requests.HTTPError as e:
-                print(f"HTTP error: {e}")
+                log(f"HTTP error: {e}")
             except Exception as e:
-                print(f"query failed: {e}")
+                log(f"query failed: {e}")
 
     if not any_queried:
-        print("\nNo module query was executed successfully.")
+        log("\nNo module query was executed successfully.")
     return 0
 
 
