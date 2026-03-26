@@ -1,5 +1,7 @@
 # misp-modules-cli
 
+![MISP modules logo](https://raw.githubusercontent.com/MISP/misp-modules/1f5306710613960b158131f7757db1e08ccc8e4f/documentation/logos/misp-modules-logo.png)
+ 
 `misp-modules-cli` is a lightweight command-line client for querying [MISP expansion modules](https://github.com/MISP/misp-modules) from a local or remote `misp-modules` service.
 
 It can:
